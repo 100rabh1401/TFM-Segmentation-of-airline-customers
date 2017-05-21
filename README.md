@@ -1,2 +1,2 @@
-# TFM-Segmentación de clientes de aerolíneas
+# TFM-Segmentation of airline customers
 TFM Master Data Science K_School
