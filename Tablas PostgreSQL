@@ -1,0 +1,208 @@
+-- creamos la tabla clientes_unicos a partir del csv generado en python:
+CREATE TABLE public.clientes_unicos
+(
+    noname numeric,
+    rloc varchar(10),
+	full_name varchar(255),
+	gender varchar(10),
+	age numeric,
+	date_of_birth date,
+	document_type varchar(2),
+	document_number varchar(50),
+	document_country varchar(10),
+	nationality varchar(50),
+	fqtv_data varchar(255),
+	general_status varchar(10),
+	boarding_status varchar(10),
+	acceptance_status varchar(10),
+	bag_status varchar(10),
+	customer_accepted varchar(10),
+	checkin_location varchar(10),
+	boarded_in_all_legs_flag varchar(10),
+	cabin_code varchar(10),
+	booking_class_code varchar(10),
+	airline_code varchar(10),
+	flight_number varchar(50),
+	departure_date_leg date,
+	quality_index numeric,
+	creation_date date,
+	advance_purchase numeric,
+	creator_office_id varchar(255),
+	creator_iata_number numeric,
+	creator_gds_code varchar(10),
+	creator_city_code varchar(10),
+	creator_lat double precision,
+	creator_lon double precision,
+	creator_country_code varchar(10),
+	creator_continent_name varchar(255),
+	creator_channel_code varchar(10),
+	booking_status_code varchar(10),
+	cabin_code_seg varchar(10),
+	booking_class_code_seg varchar(10),
+	pos_office_id  varchar(255),
+	pos_iata_number  varchar(255),
+	pos_gds_code varchar(10),
+	pos_city_code varchar(10),
+	pos_lat double precision,
+	pos_lon double precision,
+	pos_country_code varchar(10),
+	pos_continent_code varchar(255),
+	pos_channel_code varchar(10),
+	board_point varchar(10),
+	board_lat double precision,
+	board_lon double precision,
+	board_country_code varchar(10),
+	board_continent_code varchar(255),
+	off_point varchar(10),
+	off_lat double precision,
+	off_lon double precision,
+	off_country_code  varchar(10),
+	off_continent_code varchar(255),
+	distance_seg double precision,
+	route  varchar(50),
+	network varchar(255),
+	airline_code_seg varchar(10),
+	flight_number_seg varchar(50),
+	flight_type varchar(10),
+	revenue_amount_seg numeric,
+	emd_count numeric,
+	emd_amount numeric,
+	fuel_surcharge_amount_seg numeric
+    );
+    COPY clientes_unicos FROM '/Users/Clarita/Desktop/tfm/clientes_unicos.csv'CSV HEADER;
+    
+-- creamos la tabla rfm a partir del csv generado en python:
+    CREATE TABLE public.rfm
+    (
+        sin_nombre numeric,
+        document_number varchar(50),
+		frequency numeric,
+		recency numeric,
+		money_ double precision,
+		segmento numeric
+    );
+    COPY rfm FROM '/Users/Clarita/Desktop/tfm/rfm_with_clusters.csv' CSV HEADER;
+
+alter table public.rfm
+ rename column document_number to documento_identidad;
+ 
+-- unimos las dos tablas: clientes_unicos y rfm
+	create table tabla_tableau as
+	select
+		*
+	from clientes_unicos as a
+		inner join rfm as b
+			on a.document_number = b.documento_identidad;
+            
+ select count(*) from tabla_tableau;
+ select count(*) from clientes_unicos;
+ select count(*) from rfm;
+ 
+ -- Creamos la tabla segmentacion_clientes para ver todas las caracteristicas de cada cluster
+	create table segmentacion_clientes as
+	select
+		segmento,
+		document_number,
+		creation_date,
+		frequency,
+		recency,
+		money_,
+		gender,
+		age,
+		case 
+			when cabin_code = 'Y' then 'Economy'
+			when cabin_code in ('F','C') then 'First'
+			when cabin_code = 'J' then 'Business'
+			when cabin_code = 'W' then 'Economy Premium'
+			else 'Other'
+		end as cabin_code,
+		to_char(departure_date_leg, 'Day') as day_of_flight,
+		to_char(creation_date, 'Day') as day_of_purchase,
+		advance_purchase,
+		board_point,
+		board_continent_code,
+		off_point,
+		off_continent_code,
+		route,
+		case 
+			when flight_type = 'D' then 'Domestic'
+			when flight_type = 'I' then 'International'
+			else 'Others'
+		end as flight_type,
+		fuel_surcharge_amount_seg
+	from tabla_tableau as a;
+    
+    -- Creamos la tabla para ver la duración de cada vuelo
+	create table flight_duration as
+	select
+		document_number,
+		segmento,
+		creation_date,
+		max(departure_date_leg) - min (departure_date_leg) as flight_length,
+		to_char(min(departure_date_leg), 'Day') as depart_day,
+		to_char(max(departure_date_leg), 'Day') as return_day,
+		to_char(creation_date, 'Day') as day_of_purchase
+	from tabla_tableau
+	group by 1,2,3;
+    
+	-- Creamos la tabla coordinates para dibujar las coordenadas de los aeropuertos
+	create table public.coordinates as
+	select
+		a.route as path,
+		a.board_point,
+		a.board_country_code,
+		a.board_lat,
+		a.board_lon,
+		a.off_point,
+		a.off_country_code,
+		a.off_lat,
+		a.off_lon,
+		a.distance_seg,
+		count(*) as number_of_routes
+	from public.clientes_unicos as a
+		inner join public.rfm as b
+			on a.document_number = b.documento_identidad
+	group by 
+		a.route,
+		a.board_point,
+		a.board_country_code,
+		a.board_lat,
+		a.board_lon,
+		a.off_point,
+		a.off_country_code,
+		a.off_lat,
+		a.off_lon,
+		a.distance_seg
+	order by 2,3,5,6;
+    
+    -- Creamos la tabla itineraries para dibujar cada uno de los trayectos
+    create table public.itineraries as
+	select 
+		a.*,
+		1 as itinerary_order
+	from public.coordinates as a
+	union all
+	select 
+		a.*,
+		2 as itinerary_order
+	from public.coordinates as a
+	order by path,itinerary_order;
+	
+	-- Creamos la tabla airports desde donde saldran los itinerarios
+	create table airports as
+	select 
+		a.segmento,
+		c.*,
+		case when itinerary_order = 1 then b.board_lat else b.off_lat end as latitude,
+		case when itinerary_order = 1 then b.board_lon else b.off_lon end as longitude,
+		count(*) as number_itineraries_cluster
+        from rfm as a
+		inner join clientes_unicos as b
+			on a.documento_identidad = b.document_number
+		inner join itineraries as c
+			on b.board_lat = c.board_lat
+			and b.board_lon = c.board_lon
+			and b.off_lat = c.off_lat
+			and b.off_lon = c.off_lon
+	group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+	order by path,itinerary_order;
